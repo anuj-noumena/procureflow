@@ -1,0 +1,69 @@
+#!/usr/bin/env python3
+"""Local commands; load the repository .env without executing shell expressions."""
+
+import os
+import secrets
+import sys
+from pathlib import Path
+
+ROOT = Path(__file__).resolve().parents[1]
+BACK = ROOT / "backend"
+FRONT = ROOT / "frontend"
+PY = ROOT / ".venv/bin/python"
+envfile = ROOT / ".env"
+
+
+def main(args):
+    if not args:
+        raise SystemExit(
+            "Commands: init, migrate, seed, backend, frontend, test-backend, test-frontend, e2e, build"
+        )
+    command, *rest = args
+    if command == "init":
+        if not envfile.exists():
+            content = (
+                f"PF_ENV=development\nPF_DATABASE_URL=sqlite:///./procureflow.db\nPF_JWT_SECRET={secrets.token_hex(32)}\n"
+                f"PF_SEED_PASSWORD={secrets.token_urlsafe(18)}\nPF_CORS_ORIGINS=http://localhost:5173,http://127.0.0.1:5173\n"
+            )
+            with os.fdopen(
+                os.open(envfile, os.O_CREAT | os.O_EXCL | os.O_WRONLY, 0o600), "w"
+            ) as file:
+                file.write(content)
+        command = "migrate"
+    if envfile.exists():
+        for line in envfile.read_text().splitlines():
+            if line.strip() and not line.startswith("#"):
+                name, _, value = line.partition("=")
+                os.environ.setdefault(name.strip(), value.strip())
+    commands = {
+        "migrate": (BACK, [PY, "-m", "alembic", "upgrade", "head"]),
+        "seed": (BACK, [PY, "-m", "app.seed"]),
+        "backend": (
+            BACK,
+            [
+                PY,
+                "-m",
+                "uvicorn",
+                "app.main:create_app",
+                "--factory",
+                "--host",
+                "127.0.0.1",
+                "--port",
+                "8000",
+            ],
+        ),
+        "test-backend": (BACK, [PY, "-m", "pytest", "-q"]),
+        "frontend": (FRONT, ["npm", "run", "dev", "--", "--host", "127.0.0.1"]),
+        "test-frontend": (FRONT, ["npm", "test", "--"]),
+        "e2e": (FRONT, ["npm", "run", "e2e", "--"]),
+        "build": (FRONT, ["npm", "run", "build"]),
+    }
+    if command not in commands:
+        raise SystemExit("Unknown command: " + command)
+    cwd, argv = commands[command]
+    os.chdir(cwd)
+    os.execvp(str(argv[0]), [*map(str, argv), *rest])
+
+
+if __name__ == "__main__":
+    main(sys.argv[1:])
